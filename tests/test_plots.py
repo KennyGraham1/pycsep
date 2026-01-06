@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for testing
+
 import matplotlib.pyplot as plt
 import numpy
 import matplotlib.pyplot
@@ -6,6 +9,8 @@ import unittest
 import random
 import string
 from csep.utils import plots
+import csep
+from csep.core.catalogs import CSEPCatalog
 
 
 class TestPoissonPlots(unittest.TestCase):
@@ -110,6 +115,130 @@ class TestPoissonPlots(unittest.TestCase):
                 [i.sim_name[0] for i in t_tests[::-1]])
             self.assertEqual(matplotlib.pyplot.gca().get_title(),
                              t_tests[0].name)
+
+
+class TestAlarmBasedPlots(unittest.TestCase):
+    """Tests for alarm-based evaluation plots (ROC and Molchan diagrams)."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up test fixtures that are shared across all test methods."""
+        # Load forecast
+        forecast_path = 'tests/artifacts/example_csep1_forecasts/Forecast/EEPAS-0F_12_1_2007.dat'
+        cls.forecast = csep.load_gridded_forecast(forecast_path, name='EEPAS-0F')
+
+        # Create synthetic catalog with events
+        n_events = 15
+        bbox = cls.forecast.region.get_bbox()
+        min_lon, max_lon = bbox[0], bbox[1]
+        min_lat, max_lat = bbox[2], bbox[3]
+
+        # Generate random events within region bounds
+        import time
+        current_time = int(time.time() * 1000)
+        lons = numpy.random.uniform(min_lon, max_lon, n_events)
+        lats = numpy.random.uniform(min_lat, max_lat, n_events)
+        magnitudes = numpy.random.uniform(4.0, 6.0, n_events)
+        depths = numpy.random.uniform(0, 30, n_events)
+
+        # Create catalog data
+        catalog_data = [(i, current_time + i*1000, float(lats[i]), float(lons[i]),
+                         float(depths[i]), float(magnitudes[i]))
+                        for i in range(n_events)]
+
+        cls.catalog = CSEPCatalog(data=catalog_data, region=cls.forecast.region)
+
+    def test_plot_ROC_diagram_linear(self):
+        """Test plot_ROC_diagram with linear x-axis."""
+        matplotlib.pyplot.close()
+        ax = plots.plot_ROC_diagram(
+            self.forecast, self.catalog,
+            linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+    def test_plot_ROC_diagram_log(self):
+        """Test plot_ROC_diagram with logarithmic x-axis."""
+        matplotlib.pyplot.close()
+        ax = plots.plot_ROC_diagram(
+            self.forecast, self.catalog,
+            linear=False, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+    def test_plot_Molchan_diagram_linear(self):
+        """Test plot_Molchan_diagram with linear x-axis."""
+        matplotlib.pyplot.close()
+        ax = plots.plot_Molchan_diagram(
+            self.forecast, self.catalog,
+            linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+    def test_plot_Molchan_diagram_log(self):
+        """Test plot_Molchan_diagram with logarithmic x-axis."""
+        matplotlib.pyplot.close()
+        ax = plots.plot_Molchan_diagram(
+            self.forecast, self.catalog,
+            linear=False, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+    def test_ROC_diagram_with_custom_axes(self):
+        """Test ROC diagram can use custom axes."""
+        matplotlib.pyplot.close()
+        fig, ax = matplotlib.pyplot.subplots()
+        result_ax = plots.plot_ROC_diagram(
+            self.forecast, self.catalog,
+            axes=ax, linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertEqual(ax, result_ax)
+        matplotlib.pyplot.close()
+
+    def test_Molchan_diagram_with_custom_axes(self):
+        """Test Molchan diagram can use custom axes."""
+        matplotlib.pyplot.close()
+        fig, ax = matplotlib.pyplot.subplots()
+        result_ax = plots.plot_Molchan_diagram(
+            self.forecast, self.catalog,
+            axes=ax, linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertEqual(ax, result_ax)
+        matplotlib.pyplot.close()
+
+    def test_ROC_diagram_region_mismatch(self):
+        """Test that ROC diagram raises error when regions don't match."""
+        # Create catalog with different region
+        from csep.core.regions import california_relm_region
+        catalog_data = [(0, 1000, 35.0, -120.0, 10.0, 5.0)]
+        bad_catalog = CSEPCatalog(data=catalog_data, region=california_relm_region())
+
+        matplotlib.pyplot.close()
+        with self.assertRaises(RuntimeError):
+            plots.plot_ROC_diagram(
+                self.forecast, bad_catalog,
+                linear=True, show=False, savepdf=False, savepng=False
+            )
+        matplotlib.pyplot.close()
+
+    def test_Molchan_diagram_region_mismatch(self):
+        """Test that Molchan diagram raises error when regions don't match."""
+        # Create catalog with different region
+        from csep.core.regions import california_relm_region
+        catalog_data = [(0, 1000, 35.0, -120.0, 10.0, 5.0)]
+        bad_catalog = CSEPCatalog(data=catalog_data, region=california_relm_region())
+
+        matplotlib.pyplot.close()
+        with self.assertRaises(RuntimeError):
+            plots.plot_Molchan_diagram(
+                self.forecast, bad_catalog,
+                linear=True, show=False, savepdf=False, savepng=False
+            )
+        matplotlib.pyplot.close()
 
 
 if __name__ == '__main__':
