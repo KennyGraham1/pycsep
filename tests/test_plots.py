@@ -408,6 +408,155 @@ class TestAlarmForecastLoading(unittest.TestCase):
             csep.load_alarm_forecast(forecast_path, score_fields='not_a_list')
 
 
+class TestTemporalEvaluation(unittest.TestCase):
+    """Tests for temporal probability forecast evaluation (ROC and Molchan)."""
+
+    def test_load_temporal_forecast_basic(self):
+        """Test loading a basic temporal forecast CSV."""
+        forecast_path = 'tests/artifacts/temporal_forecast_example.csv'
+        data = csep.load_temporal_forecast(forecast_path)
+
+        self.assertIn('times', data)
+        self.assertIn('probabilities', data)
+        self.assertIn('metadata', data)
+        self.assertNotIn('observations', data)  # Observations not in CSV anymore
+
+        self.assertEqual(len(data['probabilities']), 19)  # 19 time windows
+
+    def test_load_temporal_forecast_missing_file(self):
+        """Test that loading non-existent file raises error."""
+        with self.assertRaises(FileNotFoundError):
+            csep.load_temporal_forecast('nonexistent_file.csv')
+
+    def test_temporal_ROC_diagram_basic(self):
+        """Test basic temporal ROC diagram."""
+        matplotlib.pyplot.close()
+
+        # Simple test data
+        probs = numpy.array([0.9, 0.7, 0.5, 0.3, 0.1])
+        obs = numpy.array([1, 1, 0, 0, 0])
+
+        ax, auc = plots.plot_temporal_ROC_diagram(
+            probs, obs, name='TestForecast', show=False,
+            savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        self.assertGreater(auc, 0.5)  # Should be better than random
+        matplotlib.pyplot.close()
+
+    def test_temporal_ROC_diagram_perfect_forecast(self):
+        """Test ROC diagram with perfect forecast."""
+        matplotlib.pyplot.close()
+
+        # Perfect forecast: all events have highest probabilities
+        probs = numpy.array([1.0, 0.9, 0.0, 0.0])
+        obs = numpy.array([1, 1, 0, 0])
+
+        ax, auc = plots.plot_temporal_ROC_diagram(
+            probs, obs, show=False, savepdf=False, savepng=False
+        )
+        self.assertAlmostEqual(auc, 1.0, places=1)  # AUC should be ~1
+        matplotlib.pyplot.close()
+
+    def test_temporal_Molchan_diagram_basic(self):
+        """Test basic temporal Molchan diagram."""
+        matplotlib.pyplot.close()
+
+        # Simple test data
+        probs = numpy.array([0.9, 0.7, 0.5, 0.3, 0.1])
+        obs = numpy.array([1, 1, 0, 0, 0])
+
+        ax, ass, ass_std = plots.plot_temporal_Molchan_diagram(
+            probs, obs, name='TestForecast', show=False,
+            savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        self.assertGreater(ass, 0.5)  # Should be better than random
+        self.assertGreater(ass_std, 0)  # Should have uncertainty estimate
+        matplotlib.pyplot.close()
+
+    def test_temporal_Molchan_diagram_perfect_forecast(self):
+        """Test Molchan diagram with a good forecast (events have highest probabilities)."""
+        matplotlib.pyplot.close()
+
+        # Good forecast: events have highest probs, many non-event days
+        # More non-event days = higher ASS if events still at top
+        probs = numpy.array([0.95, 0.90, 0.10, 0.08, 0.06, 0.04, 0.02])
+        obs = numpy.array([1, 1, 0, 0, 0, 0, 0])
+
+        ax, ass, ass_std = plots.plot_temporal_Molchan_diagram(
+            probs, obs, show=False, savepdf=False, savepng=False
+        )
+        # With 2 events in 7 days, if both events are at highest probs:
+        # At threshold 0.10: tau=2/7≈0.29, nu=0 -> trajectory goes quickly to nu=0
+        # This should give ASS > 0.5
+        self.assertGreater(ass, 0.5)  # Should be better than random
+        matplotlib.pyplot.close()
+
+    def test_temporal_diagrams_with_loaded_forecast(self):
+        """Test temporal diagrams with loaded CSV data and synthetic observations."""
+        matplotlib.pyplot.close()
+
+        # Load actual forecast data
+        forecast_path = 'tests/artifacts/temporal_forecast_example.csv'
+        data = csep.load_temporal_forecast(forecast_path)
+
+        # Create synthetic observations (events on days 3, 15, 17 - matching original)
+        observations = numpy.zeros(19, dtype=int)
+        observations[2] = 1   # day 3
+        observations[14] = 1  # day 15
+        observations[16] = 1  # day 17
+
+        # Test ROC
+        ax1, auc = plots.plot_temporal_ROC_diagram(
+            data['probabilities'], observations,
+            name='DailyM4Forecast', show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax1)
+        self.assertGreaterEqual(auc, 0.0)
+        self.assertLessEqual(auc, 1.0)
+        matplotlib.pyplot.close()
+
+        # Test Molchan
+        ax2, ass, sigma = plots.plot_temporal_Molchan_diagram(
+            data['probabilities'], observations,
+            name='DailyM4Forecast', show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax2)
+        self.assertGreaterEqual(ass, 0.0)
+        self.assertLessEqual(ass, 1.0)
+        matplotlib.pyplot.close()
+
+    def test_temporal_diagrams_length_mismatch(self):
+        """Test that mismatched lengths raise error."""
+        probs = numpy.array([0.5, 0.3])
+        obs = numpy.array([1, 0, 0])  # Different length
+
+        with self.assertRaises(ValueError):
+            plots.plot_temporal_ROC_diagram(probs, obs, show=False)
+
+        with self.assertRaises(ValueError):
+            plots.plot_temporal_Molchan_diagram(probs, obs, show=False)
+
+    def test_temporal_diagrams_log_scale(self):
+        """Test temporal diagrams with logarithmic x-axis."""
+        matplotlib.pyplot.close()
+
+        probs = numpy.array([0.9, 0.7, 0.5, 0.3, 0.1])
+        obs = numpy.array([1, 1, 0, 0, 0])
+
+        ax, auc = plots.plot_temporal_ROC_diagram(
+            probs, obs, linear=False, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+        ax, ass, sigma = plots.plot_temporal_Molchan_diagram(
+            probs, obs, linear=False, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+
 if __name__ == '__main__':
     unittest.main()
-

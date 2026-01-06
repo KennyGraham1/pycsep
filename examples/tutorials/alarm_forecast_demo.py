@@ -7,7 +7,7 @@ This script demonstrates how to:
 2. Query a real observed catalog from GeoNet (New Zealand)
 3. Evaluate the forecast using ROC curves and Molchan diagrams
 
-This implementation works with any geographic region worldwide.
+This implementation works with most geographic regions worldwide.
 """
 
 import sys
@@ -278,9 +278,6 @@ def main():
     print("  ✓ Querying real earthquake catalogs from GeoNet")
     print("  ✓ Evaluating forecasts with ROC curves and Molchan diagrams")
     print("  ✓ Comparing different score fields (alarm_score, probability, rate_per_day)")
-    print("\nFor more information:")
-    print("  - ALARM_FORECAST_USAGE.md - User guide with examples")
-    print("  - ALARM_FORECAST_IMPLEMENTATION_SUMMARY.md - Technical details")
 
 
 if __name__ == '__main__':

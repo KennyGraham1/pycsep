@@ -1326,4 +1326,204 @@ def alarm_forecast_csv(filename, lon_col='lon', lat_col='lat',
     rates = numpy.column_stack(scores_list)
 
     return rates, region, magnitudes, metadata
-        
+
+
+def temporal_forecast_csv(filename, time_col='time', probability_col='probability',
+                          delimiter=','):
+    """
+    Read temporal probability forecast from CSV file.
+
+    This function reads time-series probability forecasts where each row represents
+    a time window (e.g., day) with an associated probability of earthquake occurrence.
+    Observations should be computed separately from a catalog using
+    compute_temporal_observations().
+
+    Expected CSV format:
+        time,probability
+        1,0.0234
+        2,0.0221
+        3,0.0217
+        ...
+
+    Args:
+        filename (str): Path to temporal forecast CSV file
+        time_col (str): Name of time/index column (default: 'time').
+                       Can be integer indices or datetime strings.
+        probability_col (str): Name of probability column (default: 'probability').
+                              Values should be in range [0, 1].
+        delimiter (str): CSV delimiter character. Default: ',' (comma).
+
+    Returns:
+        tuple: (times, probabilities, metadata)
+            - times (numpy.ndarray or pandas.DatetimeIndex): Time indices
+            - probabilities (numpy.ndarray): Forecast probabilities
+            - metadata (dict): Additional information
+
+    Raises:
+        FileNotFoundError: If the CSV file does not exist
+        ValueError: If required columns are missing or data is invalid
+        CSEPIOException: If the CSV format cannot be parsed
+
+    Example:
+        >>> times, probs, meta = temporal_forecast_csv('daily_forecast.csv')
+        >>> # Compute observations from catalog
+        >>> observations = compute_temporal_observations(catalog, times)
+        >>> from csep.utils import plots
+        >>> plots.plot_temporal_Molchan_diagram(probs, observations)
+    """
+    # Check file exists
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"Temporal forecast file not found: {filename}")
+
+    # Read CSV file
+    try:
+        df = pd.read_csv(filename, delimiter=delimiter)
+    except Exception as e:
+        raise CSEPIOException(f"Failed to read CSV file {filename}: {str(e)}")
+
+    # Validate required columns
+    if probability_col not in df.columns:
+        raise ValueError(f"Probability column '{probability_col}' not found in CSV. "
+                        f"Available columns: {list(df.columns)}")
+
+    # Extract time column if present
+    if time_col in df.columns:
+        times = df[time_col].values
+        # Try to parse as datetime
+        try:
+            times = pd.to_datetime(times)
+        except:
+            pass  # Keep as-is (likely integer indices)
+    else:
+        # Use row indices as time
+        times = numpy.arange(len(df))
+        warnings.warn(f"Time column '{time_col}' not found, using row indices",
+                     RuntimeWarning)
+
+    # Extract probabilities
+    probabilities = df[probability_col].values.astype(float)
+
+    # Validate probabilities
+    if len(probabilities) == 0:
+        raise ValueError("No data found in temporal forecast CSV")
+    if numpy.any(numpy.isnan(probabilities)):
+        raise ValueError("NaN values found in probability column")
+    if numpy.any(probabilities < 0) or numpy.any(probabilities > 1):
+        warnings.warn("Probability values outside [0, 1] range found. "
+                     "Clipping to valid range.", RuntimeWarning)
+        probabilities = numpy.clip(probabilities, 0, 1)
+
+    # Build metadata
+    metadata = {
+        'n_time_windows': len(probabilities),
+        'probability_col': probability_col
+    }
+
+    return times, probabilities, metadata
+
+
+def compute_temporal_observations(catalog, times, magnitude_min=None,
+                                   start_time=None, time_delta=None):
+    """
+    Compute binary observations from a catalog based on forecast time windows.
+
+    This function counts whether one or more earthquakes occurred in each time
+    window, creating a binary observation vector suitable for temporal ROC
+    and Molchan evaluation.
+
+    Args:
+        catalog: A CSEPCatalog object or any object with:
+                 - get_datetimes(): Returns array of event datetimes
+                 - get_magnitudes(): Returns array of event magnitudes
+        times (array-like): Array representing forecast time windows.
+                           Can be datetime objects OR integer indices (1, 2, 3, ...).
+                           If integers, use start_time and time_delta to map to real times.
+        magnitude_min (float, optional): Minimum magnitude threshold. If provided,
+                                        only events >= magnitude_min are counted.
+        start_time (str or datetime, optional): Start time of the forecast period.
+                                               Required if times are integer indices.
+                                               Example: '2024-01-01' or datetime object.
+        time_delta (str or timedelta, optional): Duration of each time window.
+                                                Required if times are integer indices.
+                                                Examples: '1D' (1 day), '1H' (1 hour),
+                                                '7D' (1 week), or pd.Timedelta object.
+
+    Returns:
+        numpy.ndarray: Binary array of observations (1 if event occurred in window, 0 otherwise)
+                      Shape: (len(times),)
+
+    Example:
+        >>> # With datetime times in CSV
+        >>> catalog = csep.load_catalog('events.csv')
+        >>> data = csep.load_temporal_forecast('forecast.csv')
+        >>> observations = compute_temporal_observations(catalog, data['times'])
+        >>>
+        >>> # With integer indices (1, 2, 3, ...)
+        >>> observations = compute_temporal_observations(
+        ...     catalog, data['times'],
+        ...     start_time='2024-01-01',
+        ...     time_delta='1D',
+        ...     magnitude_min=4.0
+        ... )
+    """
+    times = numpy.asarray(times)
+
+    # Determine if we need to construct datetime times from indices
+    if start_time is not None:
+        # User provided start_time - use it with indices
+        start_time = pd.to_datetime(start_time)
+
+        if time_delta is None:
+            time_delta = pd.Timedelta(days=1)  # Default to 1 day
+        elif isinstance(time_delta, str):
+            time_delta = pd.Timedelta(time_delta)
+
+        # Convert indices to real datetimes
+        # times are treated as 0-indexed offsets from start_time
+        # If times are 1-indexed (like 1, 2, 3), subtract 1
+        min_time = numpy.min(times)
+        offsets = times - min_time  # Normalize to 0-indexed
+        real_times = pd.DatetimeIndex([start_time + int(i) * time_delta for i in offsets])
+        dt = time_delta
+    else:
+        # Try to parse times as datetimes
+        try:
+            real_times = pd.to_datetime(times)
+            # Infer time delta from spacing
+            if len(real_times) >= 2:
+                dt = real_times[1] - real_times[0]
+            else:
+                dt = pd.Timedelta(days=1)
+        except Exception:
+            raise ValueError(
+                "Could not parse times as datetimes. For integer indices, "
+                "please provide start_time and time_delta parameters. "
+                "Example: start_time='2024-01-01', time_delta='1D'"
+            )
+
+    # Get catalog event times and normalize to tz-naive UTC
+    event_times = pd.to_datetime(catalog.get_datetimes())
+    if event_times.tz is not None:
+        event_times = event_times.tz_convert('UTC').tz_localize(None)
+
+    # Normalize real_times to tz-naive as well
+    if hasattr(real_times, 'tz') and real_times.tz is not None:
+        real_times = real_times.tz_convert('UTC').tz_localize(None)
+
+    # Apply magnitude filter if specified
+    if magnitude_min is not None:
+        magnitudes = catalog.get_magnitudes()
+        mask = magnitudes >= magnitude_min
+        event_times = event_times[mask]
+
+    # Count events in each time window
+    observations = numpy.zeros(len(real_times), dtype=int)
+
+    for i, window_start in enumerate(real_times):
+        window_end = window_start + dt
+        # Count events in [window_start, window_end)
+        events_in_window = (event_times >= window_start) & (event_times < window_end)
+        if numpy.any(events_in_window):
+            observations[i] = 1
+
+    return observations
