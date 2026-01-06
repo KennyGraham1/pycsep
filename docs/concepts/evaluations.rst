@@ -384,9 +384,3 @@ Example::
     ax, ass, sigma = plots.plot_temporal_Molchan_diagram(
         data['probabilities'], observations, name='DailyM4+'
     )
-
-Publication references
-======================
-
-1. Molchan diagram (:ref:`Molchan, 1990<molchan-1990>`)
-2. ROC curves for earthquake forecasting (:ref:`Zechar and Jordan, 2008<zechar-jordan-2008>`)

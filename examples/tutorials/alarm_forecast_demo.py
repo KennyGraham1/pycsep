@@ -13,9 +13,6 @@ This implementation works with most geographic regions worldwide.
 import sys
 import os
 
-# Ensure we import from local source
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 
