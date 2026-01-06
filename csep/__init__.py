@@ -53,6 +53,7 @@ __all__ = [
     'load_evaluation_result',
     'load_gridded_forecast',
     'load_catalog_forecast',
+    'load_alarm_forecast',
     'utc_now_datetime',
     'strptime_to_utc_datetime',
     'datetime_to_utc_epoch',
@@ -524,3 +525,118 @@ def load_catalog_forecast(fname, catalog_loader=None, format='native',
     # create observed_catalog forecast
     return CatalogForecast(filename=fname, loader=catalog_loader,
                            catalog_format=format, catalog_type=type, **kwargs)
+
+
+def load_alarm_forecast(fname, name=None, score_field='alarm_score',
+                       lon_col='lon', lat_col='lat',
+                       magnitude_min=None, magnitude_max=None,
+                       start_time=None, end_time=None,
+                       delimiter=',', score_fields=None, magnitude_bins=None,
+                       **kwargs):
+    """ Load alarm-based earthquake forecast from CSV file.
+
+    This function loads alarm-based forecasts that contain spatial cells with
+    associated scores (e.g., alarm_score, probability, rate_per_day). The forecast
+    is returned as a GriddedForecast object that can be evaluated using ROC curves
+    and Molchan diagrams via plot_ROC_diagram() and plot_Molchan_diagram().
+
+    The function works with any geographic region worldwide by inferring the spatial
+    grid from the provided lon/lat coordinates in the CSV file.
+
+    Args:
+        fname (str): Path to alarm forecast CSV file
+        name (str): Name for the forecast (optional, defaults to filename)
+        score_field (str): Which field to use as forecast rate. Options:
+                          'alarm_score' (recommended for continuous scores),
+                          'probability', 'rate_per_day', or any numeric column.
+                          Default: 'alarm_score'. Ignored if score_fields is provided.
+        lon_col (str): Name of longitude column (default: 'lon')
+        lat_col (str): Name of latitude column (default: 'lat')
+        magnitude_min (float): Minimum magnitude for forecast. If None, reads from
+                              'magnitude_min' column or uses 4.0 as default.
+        magnitude_max (float): Maximum magnitude for forecast. If None, reads from
+                              'magnitude_target' column or uses magnitude_min + 0.1.
+        start_time (str or datetime): Forecast start time. If None, reads from
+                                     'start_time' column if available.
+        end_time (str or datetime): Forecast end time. If None, reads from
+                                   'end_time' column if available.
+        delimiter (str): CSV delimiter character. Default: ',' (comma).
+                        Use '\\t' for tab-delimited, ';' for semicolon, etc.
+        score_fields (list of str): List of column names to extract as multiple
+                                   score fields. If provided, score_field is ignored
+                                   and rates will have shape (n_cells, n_score_fields).
+        magnitude_bins (list or numpy.ndarray): Custom magnitude bin edges.
+                                               If provided, overrides magnitude_min
+                                               and magnitude_max.
+        **kwargs: Additional keyword arguments passed to GriddedForecast constructor
+
+    Returns:
+        :class:`csep.core.forecasts.GriddedForecast`
+
+    Raises:
+        FileNotFoundError: If the CSV file does not exist
+        ValueError: If required columns are missing or data is invalid
+
+    Example:
+        >>> # Load alarm forecast
+        >>> forecast = csep.load_alarm_forecast('alarm_forecast.csv',
+        ...                                     name='MyAlarmForecast')
+        >>>
+        >>> # Load tab-delimited file
+        >>> forecast = csep.load_alarm_forecast('forecast.tsv', delimiter='\\t')
+        >>>
+        >>> # Load with multiple score fields
+        >>> forecast = csep.load_alarm_forecast('forecast.csv',
+        ...     score_fields=['alarm_score', 'probability'])
+        >>>
+        >>> # Load observed catalog
+        >>> catalog = csep.load_catalog('observed_events.csv')
+        >>>
+        >>> # Evaluate with Molchan diagram
+        >>> from csep.utils import plots
+        >>> plots.plot_Molchan_diagram(forecast, catalog, linear=True)
+        >>>
+        >>> # Evaluate with ROC curve
+        >>> plots.plot_ROC_diagram(forecast, catalog, linear=True)
+    """
+    # Sanity checks
+    if not os.path.exists(fname):
+        raise FileNotFoundError(
+            f"Could not locate file {fname}. Unable to load alarm forecast.")
+
+    # Set default name from filename if not provided
+    if name is None:
+        name = os.path.splitext(os.path.basename(fname))[0]
+
+    # Load alarm forecast using custom reader
+    rates, region, magnitudes, metadata = readers.alarm_forecast_csv(
+        filename=fname,
+        lon_col=lon_col,
+        lat_col=lat_col,
+        score_field=score_field,
+        magnitude_min=magnitude_min,
+        magnitude_max=magnitude_max,
+        start_time=start_time,
+        end_time=end_time,
+        delimiter=delimiter,
+        score_fields=score_fields,
+        magnitude_bins=magnitude_bins
+    )
+
+    # Extract time information from metadata if available
+    if 'start_time' in metadata and 'start_time' not in kwargs:
+        kwargs['start_time'] = metadata['start_time']
+    if 'end_time' in metadata and 'end_time' not in kwargs:
+        kwargs['end_time'] = metadata['end_time']
+
+    # Create GriddedForecast
+    forecast = GriddedForecast(
+        data=rates,
+        region=region,
+        magnitudes=magnitudes,
+        name=name,
+        **kwargs
+    )
+
+    return forecast
+

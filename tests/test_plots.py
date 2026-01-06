@@ -241,5 +241,173 @@ class TestAlarmBasedPlots(unittest.TestCase):
         matplotlib.pyplot.close()
 
 
+class TestAlarmForecastLoading(unittest.TestCase):
+    """Tests for alarm forecast loading and evaluation."""
+
+    def test_load_alarm_forecast_basic(self):
+        """Test loading a basic alarm forecast CSV."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        forecast = csep.load_alarm_forecast(forecast_path, name='TestAlarm')
+
+        self.assertIsNotNone(forecast)
+        self.assertEqual(forecast.name, 'TestAlarm')
+        self.assertEqual(forecast.data.shape[0], 10)  # 10 cells
+        self.assertEqual(forecast.data.shape[1], 1)   # 1 magnitude bin
+
+    def test_load_alarm_forecast_with_score_field(self):
+        """Test loading alarm forecast with different score fields."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+
+        # Test with alarm_score (default)
+        forecast1 = csep.load_alarm_forecast(forecast_path, score_field='alarm_score')
+        self.assertIsNotNone(forecast1)
+
+        # Test with probability
+        forecast2 = csep.load_alarm_forecast(forecast_path, score_field='probability')
+        self.assertIsNotNone(forecast2)
+
+        # Test with rate_per_day
+        forecast3 = csep.load_alarm_forecast(forecast_path, score_field='rate_per_day')
+        self.assertIsNotNone(forecast3)
+
+        # Scores should be different
+        self.assertFalse(numpy.array_equal(forecast1.data, forecast2.data))
+        self.assertFalse(numpy.array_equal(forecast2.data, forecast3.data))
+
+    def test_load_alarm_forecast_region(self):
+        """Test that alarm forecast creates correct spatial region."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        forecast = csep.load_alarm_forecast(forecast_path)
+
+        # Check region is created
+        self.assertIsNotNone(forecast.region)
+
+        # Check number of spatial bins matches data
+        self.assertEqual(forecast.region.num_nodes, 10)
+
+    def test_load_alarm_forecast_magnitudes(self):
+        """Test that alarm forecast extracts correct magnitude bins."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        forecast = csep.load_alarm_forecast(forecast_path)
+
+        # Check magnitudes are read from CSV
+        self.assertEqual(forecast.magnitudes[0], 4.0)
+        self.assertEqual(forecast.magnitudes[1], 6.0)
+
+    def test_load_alarm_forecast_with_catalog_evaluation(self):
+        """Test evaluating alarm forecast with synthetic catalog."""
+        matplotlib.pyplot.close()
+
+        # Load alarm forecast
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        forecast = csep.load_alarm_forecast(forecast_path, name='AlarmTest')
+
+        # Create synthetic catalog in same region
+        n_events = 5
+        bbox = forecast.region.get_bbox()
+        min_lon, max_lon = bbox[0], bbox[1]
+        min_lat, max_lat = bbox[2], bbox[3]
+
+        import time
+        current_time = int(time.time() * 1000)
+        lons = numpy.random.uniform(min_lon, max_lon, n_events)
+        lats = numpy.random.uniform(min_lat, max_lat, n_events)
+        magnitudes = numpy.random.uniform(4.0, 6.0, n_events)
+        depths = numpy.random.uniform(0, 30, n_events)
+
+        catalog_data = [(i, current_time + i*1000, float(lats[i]), float(lons[i]),
+                         float(depths[i]), float(magnitudes[i]))
+                        for i in range(n_events)]
+
+        catalog = CSEPCatalog(data=catalog_data, region=forecast.region)
+
+        # Test ROC diagram
+        ax = plots.plot_ROC_diagram(
+            forecast, catalog,
+            linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+        # Test Molchan diagram
+        ax = plots.plot_Molchan_diagram(
+            forecast, catalog,
+            linear=True, show=False, savepdf=False, savepng=False
+        )
+        self.assertIsNotNone(ax)
+        matplotlib.pyplot.close()
+
+    def test_load_alarm_forecast_missing_file(self):
+        """Test that loading non-existent file raises error."""
+        with self.assertRaises(FileNotFoundError):
+            csep.load_alarm_forecast('nonexistent_file.csv')
+
+    def test_load_alarm_forecast_invalid_score_field(self):
+        """Test that invalid score field raises error."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        with self.assertRaises(ValueError):
+            csep.load_alarm_forecast(forecast_path, score_field='invalid_column')
+
+    def test_load_alarm_forecast_tab_delimiter(self):
+        """Test loading alarm forecast with tab delimiter."""
+        forecast_path = 'tests/artifacts/alarm_forecast_tabs.tsv'
+        forecast = csep.load_alarm_forecast(forecast_path, delimiter='\t')
+        
+        self.assertIsNotNone(forecast)
+        self.assertEqual(forecast.data.shape[0], 10)  # 10 cells
+        # Check that scores were loaded correctly
+        self.assertAlmostEqual(forecast.data[0, 0], 0.85, places=2)
+
+    def test_load_alarm_forecast_semicolon_delimiter(self):
+        """Test loading alarm forecast with semicolon delimiter."""
+        forecast_path = 'tests/artifacts/alarm_forecast_semicolon.csv'
+        forecast = csep.load_alarm_forecast(forecast_path, delimiter=';')
+        
+        self.assertIsNotNone(forecast)
+        self.assertEqual(forecast.data.shape[0], 10)  # 10 cells
+
+    def test_load_alarm_forecast_multiple_score_fields(self):
+        """Test loading alarm forecast with multiple score fields."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        forecast = csep.load_alarm_forecast(
+            forecast_path,
+            score_fields=['alarm_score', 'probability', 'rate_per_day']
+        )
+        
+        self.assertIsNotNone(forecast)
+        self.assertEqual(forecast.data.shape[0], 10)  # 10 cells
+        self.assertEqual(forecast.data.shape[1], 3)   # 3 score fields
+        
+        # Check first row values match expected
+        self.assertAlmostEqual(forecast.data[0, 0], 0.85, places=2)  # alarm_score
+        self.assertAlmostEqual(forecast.data[0, 1], 0.75, places=2)  # probability
+        self.assertAlmostEqual(forecast.data[0, 2], 0.002, places=4)  # rate_per_day
+
+    def test_load_alarm_forecast_custom_magnitude_bins(self):
+        """Test loading alarm forecast with custom magnitude bins."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        custom_bins = [4.0, 5.0, 6.0, 7.0]
+        forecast = csep.load_alarm_forecast(
+            forecast_path,
+            magnitude_bins=custom_bins
+        )
+        
+        self.assertIsNotNone(forecast)
+        numpy.testing.assert_array_equal(forecast.magnitudes, custom_bins)
+
+    def test_load_alarm_forecast_invalid_magnitude_bins(self):
+        """Test that invalid magnitude bins raises error."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        with self.assertRaises(ValueError):
+            csep.load_alarm_forecast(forecast_path, magnitude_bins=[4.0])  # Need at least 2 edges
+
+    def test_load_alarm_forecast_invalid_score_fields(self):
+        """Test that invalid score_fields type raises error."""
+        forecast_path = 'tests/artifacts/alarm_forecast_example.csv'
+        with self.assertRaises(ValueError):
+            csep.load_alarm_forecast(forecast_path, score_fields='not_a_list')
+
+
 if __name__ == '__main__':
     unittest.main()
+
